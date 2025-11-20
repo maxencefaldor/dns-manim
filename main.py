@@ -21,11 +21,13 @@ from manim import (
     GREY,
     WHITE,
     YELLOW,
+    GREEN,
     LEFT,
     RIGHT,
     UP,
     DOWN,
     UL,
+    Square,
 )
 
 # Add LaTeX path
@@ -43,10 +45,11 @@ class BaseEvolutionScene(MovingCameraScene, ABC):
 
     def construct(self):
         # Seed randomness
-        np.random.seed(2)
+        np.random.seed(6)
 
         # Configuration
-        self.N = 16  # Population size
+        self.N = 32 if isinstance(self, MapElites) else 16  # Population size
+        self.initial_N = 16  # Initial population size (N for most, but can be different for MapElites)
         self.B = 8  # Reproduction batch size
         self.num_generations = 3
         self.descriptor_range = [-3, 3, 1]
@@ -94,7 +97,9 @@ class BaseEvolutionScene(MovingCameraScene, ABC):
             r"\text{Descriptor Space } \mathcal{D}", font_size=30, color=TEAL
         ).to_corner(UL)
 
-        self.play(Create(self.axes), Write(descriptor_label))
+        self.play(Create(self.axes), run_time=1.0)
+
+        self.after_setup_axes(parallel_anims=[Write(descriptor_label)])
 
         # Algorithm Steps Display
         self.steps_text = (
@@ -136,6 +141,11 @@ class BaseEvolutionScene(MovingCameraScene, ABC):
         Visualizes the competition calculation for the target dot.
         """
         pass
+
+    def after_setup_axes(self, parallel_anims=None):
+        """Optional hook to perform actions immediately after axes are created."""
+        if parallel_anims:
+            self.play(*parallel_anims)
 
     def highlight_step(self, index: int):
         """Highlights the current step in the steps list."""
@@ -206,7 +216,8 @@ class BaseEvolutionScene(MovingCameraScene, ABC):
         population = []
         dots_group = VGroup()
 
-        for _ in range(self.N):
+        # Use self.initial_N instead of self.N for initialization
+        for _ in range(self.initial_N):
             pos = np.array(
                 [
                     np.random.uniform(
@@ -327,11 +338,19 @@ class BaseEvolutionScene(MovingCameraScene, ABC):
 
             # 5. Selection
             self.highlight_step(4)
+            
             # Sort by competition_fitness (descending)
             all_dots.sort(key=lambda d: d.competition_fitness, reverse=True)
 
-            survivors = all_dots[: self.N]
-            dead = all_dots[self.N :]
+            # Filter out individuals with -infinity fitness
+            viable_dots = [d for d in all_dots if d.competition_fitness > -float("inf")]
+            
+            # If we have fewer viable dots than N, we take all viable dots
+            # Otherwise we take top N
+            survivors = viable_dots[: self.N]
+            
+            # Dead are those not in survivors (either unfit or low competition fitness)
+            dead = [d for d in all_dots if d not in survivors]
 
             # Animate death
             if dead:
@@ -643,4 +662,183 @@ class DominatedNoveltySearch(BaseEvolutionScene):
         self.play(
             FadeOut(formula),
             target_dot.animate.set_color(original_color),
+        )
+
+
+class MapElites(BaseEvolutionScene):
+    """
+    MAP-Elites implementation.
+    Competition is based on a grid of cells. Only the elite in each cell survives.
+    """
+
+    def get_title_text(self) -> str:
+        return r"\textbf{MAP-Elites}"
+
+    def get_steps_content(self) -> list[MathTex]:
+        return [
+            MathTex(r"\text{1. Reproduction}", font_size=24),
+            MathTex(r"\text{2. Concatenation}", font_size=24),
+            MathTex(r"\text{3. Evaluation}", font_size=24),
+            MathTex(r"\text{4. Competition (Grid)}", font_size=24),
+            MathTex(r"\text{5. Selection (Top-}N\text{)}", font_size=24),
+        ]
+
+    def setup_layout(self):
+        super().setup_layout()
+
+    def after_setup_axes(self, parallel_anims=None):
+        if parallel_anims is None:
+            parallel_anims = []
+            
+        self.cells = VGroup()
+
+        start, stop, step = self.descriptor_range
+        # Convert to integers for range
+        start_i, stop_i = int(start), int(stop)
+
+        # Create grid squares
+        for x in range(start_i, stop_i):
+            for y in range(start_i, stop_i):
+                # Center of the cell
+                center_x = x + 0.5
+                center_y = y + 0.5
+
+                square = Square(side_length=1.0)
+                square.move_to(self.axes.c2p(center_x, center_y))
+                square.set_stroke(color=WHITE, width=1, opacity=0.3)
+                square.set_fill(color=BLUE, opacity=0.0)  # Initially empty
+                square.grid_pos = (x, y)  # Store grid coordinates
+                self.cells.add(square)
+
+        # Add cells to scene, but behind everything
+        self.cells.z_index = -50
+        
+        # Animate creation of grid
+        self.play(Create(self.cells), *parallel_anims, run_time=1.0)
+
+    def get_cell_coords(self, pos: np.ndarray) -> tuple[int, int]:
+        """Maps a position to grid coordinates (x, y)."""
+        # descriptor_range is [-3, 3]
+        # We want to map [-3, -2) -> -3, [-2, -1) -> -2, etc.
+        # Max valid index is 2 (for interval [2, 3]).
+
+        # Floor to get the lower bound of the interval
+        x = int(np.floor(pos[0]))
+        y = int(np.floor(pos[1]))
+
+        # Clamp to valid range [-3, 2]
+        # We assume the grid goes from start to stop-1
+        start, stop, _ = self.descriptor_range
+        min_val = int(start)
+        max_val = int(stop) - 1
+
+        x = min(max(x, min_val), max_val)
+        y = min(max(y, min_val), max_val)
+
+        return (x, y)
+
+    def perform_competition(self, dots: list[Dot]) -> None:
+        # Group dots by cell
+        cell_map = {}
+        for dot in dots:
+            coords = self.get_cell_coords(dot.descriptor)
+            if coords not in cell_map:
+                cell_map[coords] = []
+            cell_map[coords].append(dot)
+
+        # Determine competition fitness
+        occupied_coords = set()
+
+        for coords, cell_dots in cell_map.items():
+            # Find best in cell (highest objective fitness)
+            best_dot = max(cell_dots, key=lambda d: d.objective_fitness)
+            
+            occupied_coords.add(coords)
+
+            for dot in cell_dots:
+                if dot is best_dot:
+                    # Winner keeps its fitness
+                    dot.competition_fitness = dot.objective_fitness
+                else:
+                    # Losers get -inf
+                    dot.competition_fitness = -float("inf")
+        
+        # Update Grid Visuals
+        anims = []
+        for square in self.cells:
+            coords = square.grid_pos
+            if coords in occupied_coords:
+                # Cell is occupied -> Full (Light Blue)
+                if square.fill_opacity == 0.0:
+                    anims.append(square.animate.set_fill(opacity=0.2))
+            else:
+                # Cell is empty -> Empty (Transparent)
+                if square.fill_opacity > 0.0:
+                    anims.append(square.animate.set_fill(opacity=0.0))
+
+        if anims:
+            self.play(*anims, run_time=0.5)
+
+    def visualize_competition(self, target_dot: Dot, all_dots: list[Dot]) -> None:
+        # Identify target cell
+        coords = self.get_cell_coords(target_dot.descriptor)
+
+        # Find the square
+        target_square = None
+        for sq in self.cells:
+            if sq.grid_pos == coords:
+                target_square = sq
+                break
+
+        if not target_square:
+            return
+
+        # Find other dots in this cell
+        cell_dots = []
+        for dot in all_dots:
+            if self.get_cell_coords(dot.descriptor) == coords:
+                cell_dots.append(dot)
+
+        # Sort by objective fitness descending
+        cell_dots.sort(key=lambda d: d.objective_fitness, reverse=True)
+        winner = cell_dots[0]
+
+        # Highlight the cell border
+        self.play(
+            target_square.animate.set_stroke(color=YELLOW, width=4, opacity=1.0),
+            run_time=0.5,
+        )
+
+        # Show competition
+        if len(cell_dots) > 1:
+            # Color code: Winner GREEN, Losers RED
+            anims = []
+            for dot in cell_dots:
+                if dot is winner:
+                    anims.append(dot.animate.set_color(GREEN))
+                else:
+                    anims.append(dot.animate.set_color(RED))
+            
+            self.play(*anims, run_time=0.5)
+            self.wait(0.5)
+            
+            # Restore colors based on objective fitness (or keep them red/green? Base class restores them later)
+            # Base class calls pulse with objective fitness color right after this method.
+            # So we can just restore to objective fitness color to be smooth.
+            restore_anims = [
+                dot.animate.set_color(self.get_color_from_fitness(dot.objective_fitness))
+                for dot in cell_dots
+            ]
+            self.play(*restore_anims, run_time=0.5)
+
+        else:
+            # Just one dot (the winner)
+            # Pulse it
+            self.play(target_dot.animate.scale(1.2), run_time=0.3)
+            self.play(target_dot.animate.scale(1 / 1.2), run_time=0.3)
+
+        # Reset cell border
+        self.play(
+            target_square.animate.set_stroke(color=WHITE, width=1, opacity=0.3),
+            run_time=0.5,
         )
