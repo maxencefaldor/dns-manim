@@ -1,0 +1,15 @@
+[project]
+name = "qd-anim"
+version = "0.1.0"
+description = "Animation of Quality-Diversity algorithm using Manim"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+	"numpy",
+    "manim>=0.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+]

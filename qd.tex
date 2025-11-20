@@ -1,0 +1,126 @@
+\newcommand{\searchSpace}{\mathcal{X}}
+\newcommand{\individual}{\mathbf{x}}
+\newcommand{\population}{\mathbf{X}}
+
+% Genetic Algorithms
+\newcommand{\fitness}{f}
+\newcommand{\fitnesses}{\mathbf{\fitness}}
+
+% Quality-Diversity
+\newcommand{\descriptorSpace}{\mathcal{D}}
+\newcommand{\descriptor}{\mathbf{d}}
+\newcommand{\descriptors}{\descriptor}
+
+\newcommand{\centroid}{\mathbf{c}}
+\newcommand{\centroids}{\centroid}
+
+
+\subsection{Genetic Algorithms}
+\label{sec:background-ga}
+%
+Genetic Algorithms~\citep{ga,rechenberg_EvolutionsstrategieOptimierungTechnischer_1973} (GAs) are population-based black-box optimization methods that evolve a population of candidate solutions across generations.
+%
+These algorithms have become fundamental tools in optimization due to their ability to handle non-convex, multi-modal landscapes where traditional gradient-based methods often fail.
+%
+\Cref{alg:ga} outlines a standard GA implementation, though numerous variations exist.
+
+\begin{wrapfigure}{r}{0.6\textwidth} % 'l' for left. Width is 0.5\textwidth.
+    \vspace{-1\intextsep} % Optional: Adjust default spacing above the algorithm. Remove or tune as needed.
+    \begin{minipage}{\linewidth} % Ensures algorithm respects the wrapfigure's width
+        \begin{algorithm}[H] % [H] from 'float' package to place algorithm "here"
+            \caption{Genetic Algorithm}
+            \label{alg:ga}
+            \small
+            \begin{algorithmic} % Optional: [1] adds line numbering
+                \Require population size $N$, reproduction batch size $B$
+                \State Initialize population $\population$ with fitness $\fitnesses$
+                \For{each generation}
+                    \State $\population^\prime \gets \textsc{reproduction}(\population, \fitnesses)$\Comment{Generate $B$ offspring}
+                    \State $\mathrlap{\population}\hphantom{\population^\prime} \gets \textsc{concat}(\population, \population^\prime)$\Comment{Add offspring to population}
+                    \State $\mathrlap{\fitnesses}\hphantom{\population^\prime} \gets \textsc{evaluation}(\population)$\Comment{Evaluate fitness}
+                    \State {\color{red}$\mathrlap{\tilde{\fitnesses}}\hphantom{\population^\prime} \gets \textsc{competition}(\fitnesses)$}\Comment{Global competition (identity)}
+                    \State $\mathrlap{\population}\hphantom{\population^\prime} \gets \textsc{selection}(\population, \tilde{\fitnesses})$\Comment{Keep top-$N$ individuals}
+                \EndFor
+            \end{algorithmic}
+        \end{algorithm}
+    \end{minipage}
+    \vspace{-\intextsep} % Optional: Adjust default spacing below the algorithm. Remove or tune as needed.
+\end{wrapfigure}
+%
+At each generation, a GA updates a population of $N$ solutions $\population = (\individual_i)_{i=1}^N \in \mathbb{R}^{N \times n}$ with corresponding fitness values $\fitnesses = (\fitness_i)_{i=1}^N \in \mathbb{R}^N$.
+%
+First, $B$ new offspring solutions $\population^\prime = \textsc{reproduction}(\population, \fitnesses)$ are generated through mechanisms like crossover and mutation.
+%
+These offspring are added to the population, creating a set $\textsc{concat}(\population, \population^\prime)$ of size $N+B$.
+%
+Then, $\textsc{competition}$ computes the \emph{competition fitness} $\tilde{\fitnesses}$ that will determine survival. In classic GAs, this function is simply the identity function $\tilde{\fitnesses} = \fitnesses$, meaning individuals engage in global competition based on their raw fitness values --- this baseline will be modified in QD algorithms to implement local competition.
+%
+Finally, the selection operator ranks all solutions according to their competition fitness $\tilde{\fitnesses}$ and retains only the top-$N$ solutions through truncation, forming the next generation.
+
+\subsection{Quality-Diversity}
+\label{sec:background-qd}
+%
+Quality-Diversity~\citep{pugh_QualityDiversityNew_2016} is a family of genetic algorithms that implement local competition to generate diverse, high-performing solutions.
+%
+In a QD algorithm, each solution is characterized by both its fitness value $\fitness$ and a descriptor vector $\descriptor \in \descriptorSpace \subset \mathbb{R}^D$ that captures meaningful features of the individual.
+%
+The descriptors define precisely how solutions differ from each other, providing a mathematical foundation for local competition where solutions compete primarily with similar neighbors rather than the entire population.
+
+\begin{wrapfigure}{r}{0.6\textwidth} % 'l' for left, 'r' for right. Width is 0.5\textwidth.
+    \vspace{-2\intextsep} % Optional: Adjust default spacing above the algorithm. Remove or tune as needed.
+    \begin{minipage}{\linewidth} % Ensures algorithm respects the wrapfigure's width
+        \begin{algorithm}[H] % [H] from 'float' package to place algorithm "here"
+            \caption{Quality-Diversity}
+            \label{alg:qd}
+            \small
+            \begin{algorithmic} % Optional: [1] adds line numbering
+                \Require population size $N$, reproduction batch size $B$
+                \State Initialize population $\population$ with fitness $\fitnesses$ and descriptors $\descriptors$
+                \For{each generation}
+                    \State $\mathrlap{\population^\prime}\hphantom{\fitnesses, \descriptors} \gets \textsc{reproduction}(\population, \fitnesses)$\Comment{Generate $B$ offspring}
+                    \State $\mathrlap{\population}\hphantom{\fitnesses, \descriptors} \gets \textsc{concat}(\population, \population^\prime)$\Comment{Add offspring to population}
+                    \State $\mathrlap{\fitnesses, \descriptors}\hphantom{\fitnesses, \descriptors} \gets \textsc{evaluation}(\population)$\Comment{Evaluate fitness and descriptor}
+                    \State {\color{green}$\mathrlap{\tilde{\fitnesses}}\hphantom{\fitnesses, \descriptors} \gets \textsc{competition}(\fitnesses, \descriptors)$\Comment{Local competition}}
+                    \State $\mathrlap{\population}\hphantom{\fitnesses, \descriptors} \gets \textsc{selection}(\population, \tilde{\fitnesses})$\Comment{Keep top-$N$ individuals}
+                \EndFor
+            \end{algorithmic}
+        \end{algorithm}
+    \end{minipage}
+    \vspace{-\intextsep} % Optional: Adjust default spacing below the algorithm. Remove or tune as needed.
+\end{wrapfigure}
+
+At each generation, a QD algorithm updates a population of $N$ solutions $\population = (\individual_i)_{i=1}^N \in \mathbb{R}^{N \times n}$ with corresponding fitness values $\fitnesses = (\fitness_i)_{i=1}^N \in \mathbb{R}^N$ and descriptors $\descriptors = (\descriptor_i)_{i=1}^N \in \mathbb{R}^{N \times D}$.
+%
+The key innovation lies in replacing global competition with local competition. While GAs used the identity function for $\textsc{competition}$, QD algorithms compute competition fitness values $\tilde{\fitnesses}$ based on both $\fitnesses$ and $\descriptors$. Individuals primarily compete with others having similar descriptors, creating local competitive pressures that promote both quality and diversity.
+%
+The selection of individuals for the next generation remains the same --- ranking by $\tilde{\fitnesses}$ followed by truncation --- but now operates on locally-modified fitness values. This local competition allows the population to maintain diverse solutions adapted to different niches while driving improvement within each niche.
+
+\subsubsection{MAP-Elites}
+\label{sec:background-me}
+%
+ME is a prominent QD algorithm that implements local competition by discretizing the descriptor space into a grid of cells~\citep{mouret_IlluminatingSearchSpaces_2015,vassiliades_UsingCentroidalVoronoi_2018}. Each cell in the grid is represented by a centroid $\centroid_i$ and maintains at most one solution. Competition occurs only between solutions mapped to the same cell. Given a population with fitness $\fitnesses$ and descriptors $\descriptors$, the $\textsc{competition}$ function operates as follows:
+\begin{enumerate}
+    \item Each individual is assigned to its nearest centroid based on its descriptor, partitioning the population into grid cells.
+    \item Within each cell $i$, only the highest-fitness individual $\individual_k$ maintains its original fitness value $\tilde{\fitness}_k = \fitness_k$, while all other individuals $\individual_j$ are eliminated by setting $\tilde{\fitness}_j = -\infty$, for $j \neq k$.
+\end{enumerate}
+This mechanism ensures that only the best-performing solution survives in each cell of the descriptor space, effectively implementing local competition.
+
+\subsubsection{Novelty Search}
+\label{sec:background-ns}
+%
+While not strictly a QD algorithm, Novelty Search (NS) pioneered key ideas that influenced QD approaches. This algorithm rewards solutions for being different from an archive of past solutions. Here, we present a simplified variant where novelty is computed with regards to the current population. Given a population with fitness $\fitnesses$ and descriptors $\descriptors$, the $\textsc{competition}$ function operates as follows:
+\begin{enumerate}
+    \item For each solution $\individual_i \in \population$, compute the descriptor space distances to \textit{all} other solutions $\mathcal{D}_i = \set{\norm{\descriptor_i - \descriptor_j}}{j = 1, \dots, N, j \neq i}$.
+    \item Compute the \textit{novelty score}, $n(\individual_i)$, which is the average distance to the $k$-nearest neighbors in $\mathcal{D}_i$. Set the competition fitness $\tilde{\fitness}_i = n(\individual_i)$.
+\end{enumerate}
+This mechanism encourages solutions to explore novel regions of the descriptor space that are distant from other solutions.
+
+\subsubsection{Dominated Novelty Search}
+\label{sec:background-dns}
+%
+Dominated Novelty Search~\citep{dns} is a QD algorithm that implements local competition using a \textsc{competition} function that rewards solutions for being different from their \textit{fitter} neighbors. Given a population with fitness $\fitnesses$ and descriptors $\descriptors$, the $\textsc{competition}$ function operates as follows:
+\begin{enumerate}
+    \item For each solution $\individual_i \in \population$, compute the descriptor space distances to \textit{fitter} solutions\\ $\mathcal{D}_i = \set{\norm{\descriptor_i - \descriptor_j}}{j = 1, \dots, N, j \neq i, \fitness_j > \fitness_i}$.
+    \item Compute the \textit{dominated novelty score}, $n^+(\individual_i)$, which is the average distance to the $k$-nearest-fitter neighbors. Set the competition fitness $\tilde{\fitness}_i = n^+(\individual_i)$.
+\end{enumerate}
+This mechanism encourages solutions to explore regions of the descriptor space that are distant from better-performing solutions, naturally balancing quality and diversity.
