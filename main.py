@@ -7,7 +7,6 @@ from manim import (
     NumberPlane,
     Dot,
     VGroup,
-    DashedLine,
     Line,
     Create,
     Write,
@@ -88,6 +87,7 @@ class BaseEvolutionScene(MovingCameraScene, ABC):
             },
             faded_line_ratio=5,
         ).shift(LEFT * 2)
+        self.axes.z_index = -100  # Ensure axes are always in background
 
         # Labels
         descriptor_label = MathTex(
@@ -264,46 +264,44 @@ class BaseEvolutionScene(MovingCameraScene, ABC):
 
                 child = self.create_dot(new_pos, color=GREY)
                 child_dots.append(child)
+                
+                # Start child at parent position (appearing from behind)
+                target_pos = child.get_center()
+                child.move_to(parent.get_center())
+                child.z_index = parent.z_index - 1
 
                 # Animate creation
-                line = DashedLine(
-                    parent.get_center(),
-                    child.get_center(),
-                    color=WHITE,
-                    stroke_opacity=0.5,
-                    stroke_width=1,  # Reduced thickness
-                    dashed_ratio=0.75,  # Longer dashes
-                    dash_length=0.1,  # Increased dash length
-                )
-                line.z_index = -1  # Put line in background
-                anims.append(Create(line))
+                # FadeIn (appear) + move to new position
                 anims.append(FadeIn(child))
+                anims.append(child.animate.move_to(target_pos))
 
-            self.play(*anims, run_time=0.5)
+            self.play(*anims, run_time=1.0)
 
             # 2. Concatenation
             self.highlight_step(1)
             all_dots = population + child_dots
             self.wait(0.5)
 
-            # Remove lines
-            lines = [m for m in self.mobjects if isinstance(m, DashedLine)]
-            if lines:
-                self.play(*[FadeOut(line) for line in lines], run_time=0.5)
-
             # 3. Evaluation (Objective)
             self.highlight_step(2)
-            eval_anims = []
+
+            # Calculate fitness first
             for dot in child_dots:
                 fit = self.get_objective_fitness(dot.descriptor)
                 dot.objective_fitness = fit
-                # Color always reflects objective fitness
-                eval_anims.append(
-                    dot.animate.set_color(self.get_color_from_fitness(fit))
+
+            if child_dots:
+                # 1. Pulse Up
+                self.play(
+                    *[d.animate.scale(1.5) for d in child_dots],
+                    run_time=0.5,
+                )
+                # 2. Pulse Down + Color Change
+                self.play(
+                    *[d.animate.scale(1/1.5).set_color(self.get_color_from_fitness(d.objective_fitness)) for d in child_dots],
+                    run_time=0.5,
                 )
 
-            if eval_anims:
-                self.play(*eval_anims)
             self.wait(0.5)
 
             # 4. Competition
@@ -312,6 +310,18 @@ class BaseEvolutionScene(MovingCameraScene, ABC):
 
             # Explain Competition logic (Zoom and show lines)
             self.explain_competition(all_dots)
+
+            # Pulse all nodes to show global competition
+            self.play(*[d.animate.set_color(YELLOW) for d in all_dots], run_time=0.5)
+            self.play(
+                *[
+                    d.animate.set_color(
+                        self.get_color_from_fitness(d.objective_fitness)
+                    )
+                    for d in all_dots
+                ],
+                run_time=0.5,
+            )
 
             self.wait(0.5)
 
@@ -324,13 +334,17 @@ class BaseEvolutionScene(MovingCameraScene, ABC):
             dead = all_dots[self.N :]
 
             # Animate death
-            death_anims = []
-            for d in dead:
-                death_anims.append(d.animate.set_color(GREY).scale(0.5))
+            if dead:
+                # 1. Turn Gray and Pulse Up
+                self.play(
+                    *[d.animate.set_color(GREY).scale(1.5) for d in dead],
+                    run_time=0.5,
+                )
 
-            if death_anims:
-                self.play(*death_anims, run_time=1.0)
-                self.play(*[FadeOut(d) for d in dead], run_time=1.0)
+                # 2. Shrink to point
+                self.play(*[d.animate.scale(0.0) for d in dead], run_time=0.5)
+
+                self.remove(*dead)
 
             population = survivors
             # Note: dots_group is not strictly tracked as a VGroup for updating,
@@ -367,12 +381,29 @@ class GeneticAlgorithm(BaseEvolutionScene):
             dot.competition_fitness = dot.objective_fitness
 
     def visualize_competition(self, target_dot: Dot, all_dots: list[Dot]) -> None:
-        # Just show that fitness is unchanged
-        text = MathTex(r"\tilde{f} = f", font_size=24).next_to(target_dot, UP, buff=0.1)
+        # Identity: Competition fitness is the same as objective fitness
+        fit = target_dot.objective_fitness
 
-        self.play(Write(text), target_dot.animate.scale(1.2))
-        self.wait(0.5)
-        self.play(FadeOut(text), target_dot.animate.scale(1 / 1.2))
+        # Formula (Simplified)
+        formula = MathTex(rf"\tilde{{f}} = {fit:.2f}", font_size=24).move_to(
+            target_dot.get_center()
+        )
+        formula.z_index = 2
+
+        # Animate similar to Novelty Search: Turn yellow while "calculating"
+        original_color = target_dot.get_color()
+        self.play(target_dot.animate.set_color(YELLOW), run_time=1.0)
+
+        # Show formula popping out
+        self.play(formula.animate.next_to(target_dot, UP, buff=0.2), run_time=0.5)
+
+        # Wait with yellow color
+        self.wait(1)
+
+        self.play(
+            FadeOut(formula),
+            target_dot.animate.set_color(original_color),
+        )
 
 
 class NoveltySearch(BaseEvolutionScene):
@@ -452,23 +483,35 @@ class NoveltySearch(BaseEvolutionScene):
         self.play(*[Write(lbl) for lbl in labels])
         self.wait(0.5)
 
+        # --- New Visualization: Move labels to merge ---
+
         avg = np.mean(vals) if vals else 0.0
 
-        # Formula
-        formula = MathTex(
-            rf"\tilde{{f}} = \frac{{1}}{{k}} \sum d_i = {avg:.2f}", font_size=24
-        ).next_to(target_dot, UP, buff=0.2)
-        self.play(Write(formula))
+        # Formula (Simplified)
+        formula = MathTex(rf"\tilde{{f}} = {avg:.2f}", font_size=24).move_to(
+            target_dot.get_center()
+        )
+        formula.z_index = 2
 
-        # Update color to indicate calculation complete (using Yellow to highlight)
+        # Animate distances moving towards target AND turn target yellow
         original_color = target_dot.get_color()
-        self.play(target_dot.animate.set_color(YELLOW))
+        self.play(
+            *[
+                label.animate.move_to(target_dot.get_center()).scale(0.1).set_opacity(0)
+                for label in labels
+            ],
+            *[FadeOut(line) for line in lines],
+            target_dot.animate.set_color(YELLOW),
+            run_time=1.0,
+        )
+
+        self.play(formula.animate.next_to(target_dot, UP, buff=0.2), run_time=0.5)
+
+        # Wait with yellow color
         self.wait(1)
 
         self.play(
             FadeOut(formula),
-            *[FadeOut(line) for line in lines],
-            *[FadeOut(lbl) for lbl in labels],
             target_dot.animate.set_color(original_color),
         )
 
@@ -554,6 +597,7 @@ class DominatedNoveltySearch(BaseEvolutionScene):
                 color=WHITE,
                 stroke_width=1,
             )
+            line.z_index = -1
             lines.append(line)
 
             label = (
@@ -561,6 +605,7 @@ class DominatedNoveltySearch(BaseEvolutionScene):
                 .move_to(line.get_center())
                 .shift(UP * 0.15)
             )
+            label.z_index = 1
             labels.append(label)
             vals.append(dist)
 
@@ -568,20 +613,34 @@ class DominatedNoveltySearch(BaseEvolutionScene):
         self.play(*[Write(lbl) for lbl in labels])
         self.wait(0.5)
 
+        # --- New Visualization: Move labels to merge ---
+
         avg = np.mean(vals) if vals else 0.0
 
-        formula = MathTex(
-            rf"\tilde{{f}} = \frac{{1}}{{k}} \sum d_i = {avg:.2f}", font_size=24
-        ).next_to(target_dot, UP, buff=0.2)
-        self.play(Write(formula))
+        # Formula (Simplified)
+        formula = MathTex(rf"\tilde{{f}} = {avg:.2f}", font_size=24).move_to(
+            target_dot.get_center()
+        )
+        formula.z_index = 2
 
+        # Animate distances moving towards target AND turn target yellow
         original_color = target_dot.get_color()
-        self.play(target_dot.animate.set_color(YELLOW))
+        self.play(
+            *[
+                label.animate.move_to(target_dot.get_center()).scale(0.1).set_opacity(0)
+                for label in labels
+            ],
+            *[FadeOut(line) for line in lines],
+            target_dot.animate.set_color(YELLOW),
+            run_time=1.0,
+        )
+
+        self.play(formula.animate.next_to(target_dot, UP, buff=0.2), run_time=0.5)
+
+        # Wait with yellow color
         self.wait(1)
 
         self.play(
             FadeOut(formula),
-            *[FadeOut(line) for line in lines],
-            *[FadeOut(lbl) for lbl in labels],
             target_dot.animate.set_color(original_color),
         )
